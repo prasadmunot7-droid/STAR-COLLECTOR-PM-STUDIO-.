@@ -1,0 +1,362 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#102f22">
+<title>Jungle Coin Rush</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#081d16;overflow:hidden;font-family:Arial,sans-serif;touch-action:none}
+canvas{display:block;width:100vw;height:100dvh}
+#ui{position:absolute;inset:0;pointer-events:none;color:white}
+#top{display:flex;justify-content:space-between;padding:16px;font-weight:900;font-size:20px;text-shadow:0 3px 4px #000}
+#score{color:#ffe35b}
+#controls{position:absolute;bottom:22px;width:100%;display:flex;justify-content:space-between;padding:0 24px}
+.ctrl{pointer-events:auto;width:75px;height:70px;border:2px solid #ffffff99;border-radius:20px;background:#102f22bb;color:white;font-size:30px;font-weight:bold;touch-action:none}
+#jump{width:95px;background:#db9e24;color:#241800}
+#screen{position:absolute;inset:0;background:#041b12dd;display:flex;align-items:center;justify-content:center;flex-direction:column;text-align:center;color:white;padding:25px;gap:16px}
+h1{font-size:clamp(30px,8vw,48px);color:#ffdf4a;text-shadow:0 5px #815317}
+p{line-height:1.6;font-size:17px}
+button.start{pointer-events:auto;background:linear-gradient(#ffe66a,#e89b18);border:0;border-radius:15px;padding:16px 32px;font-size:21px;font-weight:900;color:#372307;box-shadow:0 5px #92540d}
+.small{font-size:13px;color:#b7d5bc}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="ui">
+ <div id="top">
+  <div>🪙 <span id="score">0</span></div>
+  <div>❤️ <span id="life">3</span></div>
+  <div id="distance">0 m</div>
+ </div>
+ <div id="controls">
+  <button class="ctrl" id="left">◀</button>
+  <button class="ctrl" id="jump">JUMP ▲</button>
+  <button class="ctrl" id="right">▶</button>
+ </div>
+</div>
+
+<div id="screen">
+ <div style="font-size:65px">🌴</div>
+ <h1>JUNGLE<br>COIN RUSH</h1>
+ <p>Run through the wild jungle!<br>
+ Collect gold. Jump over rocks.<br>
+ Explore the ancient ruins!</p>
+ <button class="start" id="start">START ADVENTURE</button>
+ <div class="small">Move ◀ ▶ &nbsp; Jump ▲</div>
+</div>
+
+<script>
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+let W,H,scale;
+function resize(){
+ W=innerWidth;H=innerHeight;
+ canvas.width=W*devicePixelRatio;
+ canvas.height=H*devicePixelRatio;
+ ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+}
+addEventListener("resize",resize);resize();
+
+let running=false,score=0,life=3;
+let world=0,speed=330;
+let player={x:0,y:0,vy:0,ground:true,frame:0,inv:0};
+let coins=[],rocks=[],particles=[],trees=[];
+let keys={left:false,right:false};
+const rand=(a,b)=>a+Math.random()*(b-a);
+
+function groundY(){return H*.78}
+function reset(){
+ score=0;life=3;world=0;speed=330;
+ coins=[];rocks=[];particles=[];trees=[];
+ player={x:W*.28,y:groundY()-58,vy:0,ground:true,frame:0,inv:0};
+ for(let i=0;i<20;i++)trees.push({x:i*180,y:rand(H*.24,H*.53),s:rand(.7,1.5)});
+ updateUI();
+}
+function updateUI(){
+ document.getElementById("score").textContent=score;
+ document.getElementById("life").textContent=life;
+ document.getElementById("distance").textContent=Math.floor(world/10)+" m";
+}
+
+// Background
+function background(){
+ let g=ctx.createLinearGradient(0,0,0,H);
+ g.addColorStop(0,"#50b9d3");
+ g.addColorStop(.45,"#b0dc91");
+ g.addColorStop(1,"#306c37");
+ ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+
+ // Distant mountains
+ ctx.fillStyle="#4b9569";
+ ctx.beginPath();ctx.moveTo(0,H*.57);
+ for(let x=0;x<=W+20;x+=20)
+ ctx.lineTo(x,H*.48+Math.sin((x+world*.1)*.009)*H*.07);
+ ctx.lineTo(W,H);ctx.lineTo(0,H);ctx.fill();
+
+ // Forest layers
+ for(let layer=0;layer<2;layer++){
+  let spacing=100+layer*55;
+  let offset=(world*(layer?.4:.18))%spacing;
+  for(let x=-spacing;x<W+spacing;x+=spacing){
+   let tx=x-offset;
+   let base=H*(.68+layer*.05);
+   ctx.fillStyle=layer?"#164b2d":"#24683b";
+   ctx.fillRect(tx+spacing*.4,base-100,spacing*.18,130);
+   ctx.beginPath();
+   ctx.arc(tx+spacing*.48,base-105,spacing*.48,0,Math.PI*2);
+   ctx.arc(tx+spacing*.2,base-80,spacing*.34,0,Math.PI*2);
+   ctx.arc(tx+spacing*.72,base-80,spacing*.36,0,Math.PI*2);
+   ctx.fill();
+  }
+ }
+
+ // Jungle ground
+ let gy=groundY();
+ ctx.fillStyle="#9a6a39";ctx.fillRect(0,gy,W,H-gy);
+ ctx.fillStyle="#3ca34b";ctx.fillRect(0,gy,W,16);
+ ctx.fillStyle="#226d36";ctx.fillRect(0,gy+16,W,8);
+ for(let i=0;i<W+40;i+=40){
+  let x=(i-world%40+40)%W;
+  ctx.fillStyle="#c39a58";
+  ctx.fillRect(x,gy+35,18,5);
+ }
+}
+
+// Character drawing: custom animated explorer
+function drawPlayer(){
+ let x=player.x,y=player.y;
+ let run=Math.sin(player.frame*14);
+ ctx.save();ctx.translate(x,y);
+
+ if(player.inv>0&&Math.floor(player.inv*12)%2===0){
+ ctx.globalAlpha=.35;
+ }
+
+ // Shadow
+ ctx.fillStyle="#173b22aa";
+ ctx.beginPath();ctx.ellipse(0,60,26,7,0,0,7);ctx.fill();
+
+ // Legs
+ ctx.lineCap="round";
+ ctx.strokeStyle="#35291d";ctx.lineWidth=12;
+ ctx.beginPath();
+ ctx.moveTo(-7,35);ctx.lineTo(-10+run*9,52);
+ ctx.lineTo(-17+run*13,58);ctx.stroke();
+ ctx.beginPath();
+ ctx.moveTo(7,35);ctx.lineTo(12-run*9,51);
+ ctx.lineTo(20-run*12,58);ctx.stroke();
+
+ // Shoes
+ ctx.strokeStyle="#d8b45a";ctx.lineWidth=9;
+ ctx.beginPath();ctx.moveTo(-17+run*13,58);ctx.lineTo(-6+run*13,58);ctx.stroke();
+ ctx.beginPath();ctx.moveTo(20-run*12,58);ctx.lineTo(30-run*12,58);ctx.stroke();
+
+ // Body
+ ctx.fillStyle="#e3a33e";
+ ctx.beginPath();ctx.roundRect(-17,-3,34,43,9);ctx.fill();
+
+ // Backpack
+ ctx.fillStyle="#8a4827";
+ ctx.beginPath();ctx.roundRect(10,3,13,25,5);ctx.fill();
+
+ // Arms
+ ctx.strokeStyle="#b66c38";ctx.lineWidth=10;
+ ctx.beginPath();ctx.moveTo(-15,4);ctx.lineTo(-24,20+run*8);ctx.stroke();
+ ctx.beginPath();ctx.moveTo(15,4);ctx.lineTo(23,19-run*8);ctx.stroke();
+
+ // Neck and face
+ ctx.fillStyle="#bd7945";
+ ctx.fillRect(-5,-12,10,13);
+ ctx.fillStyle="#d99558";
+ ctx.beginPath();ctx.arc(0,-23,17,0,7);ctx.fill();
+
+ // Hair
+ ctx.fillStyle="#34251b";
+ ctx.beginPath();ctx.arc(0,-29,17,Math.PI,Math.PI*2);
+ ctx.lineTo(16,-23);ctx.lineTo(9,-26);ctx.lineTo(3,-22);
+ ctx.lineTo(-5,-27);ctx.lineTo(-15,-20);ctx.fill();
+
+ // Eye
+ ctx.fillStyle="#24190e";
+ ctx.beginPath();ctx.arc(8,-22,2.3,0,7);ctx.fill();
+
+ // Explorer hat
+ ctx.fillStyle="#27643c";
+ ctx.beginPath();ctx.ellipse(0,-37,22,6,0,0,7);ctx.fill();
+ ctx.fillStyle="#438b46";
+ ctx.beginPath();ctx.roundRect(-13,-49,26,13,5);ctx.fill();
+
+ ctx.restore();
+}
+
+// Coin
+function drawCoin(c){
+ ctx.save();ctx.translate(c.x,c.y);
+ let spin=Math.abs(Math.cos(c.spin));
+ ctx.scale(Math.max(.15,spin),1);
+ ctx.fillStyle="#bd770c";
+ ctx.beginPath();ctx.arc(0,0,16,0,7);ctx.fill();
+ ctx.fillStyle="#ffe85b";
+ ctx.beginPath();ctx.arc(0,0,12,0,7);ctx.fill();
+ ctx.strokeStyle="#fff2a4";ctx.lineWidth=2;
+ ctx.beginPath();ctx.arc(0,0,8,0,7);ctx.stroke();
+ ctx.fillStyle="#b87b0d";ctx.font="bold 13px Arial";
+ ctx.textAlign="center";ctx.textBaseline="middle";
+ ctx.fillText("$",0,1);
+ ctx.restore();
+}
+
+// Obstacles
+function drawRock(r){
+ ctx.fillStyle="#514d42";
+ ctx.beginPath();
+ ctx.moveTo(r.x-23,r.y+15);
+ ctx.lineTo(r.x-18,r.y-9);
+ ctx.lineTo(r.x-5,r.y-20);
+ ctx.lineTo(r.x+14,r.y-16);
+ ctx.lineTo(r.x+25,r.y+15);
+ ctx.closePath();ctx.fill();
+ ctx.fillStyle="#827c6d";
+ ctx.beginPath();ctx.moveTo(r.x-18,r.y-9);
+ ctx.lineTo(r.x-5,r.y-20);ctx.lineTo(r.x+4,r.y-5);
+ ctx.lineTo(r.x-9,r.y+2);ctx.fill();
+}
+
+function burst(x,y,color){
+ for(let i=0;i<12;i++){
+ particles.push({x,y,vx:rand(-180,180),vy:rand(-220,80),life:.6,color});
+ }
+}
+
+function spawn(){
+ if(Math.random()<.68){
+  let n=Math.random()<.3?5:1;
+  for(let i=0;i<n;i++)
+  coins.push({x:W+40+i*43,y:groundY()-rand(70,150),spin:rand(0,7)});
+ }else{
+  rocks.push({x:W+50,y:groundY()-18});
+ }
+}
+
+function update(dt){
+ if(!running)return;
+ world+=speed*dt;
+ speed=Math.min(650,speed+dt*3);
+ player.frame+=dt;
+ player.inv=Math.max(0,player.inv-dt);
+
+ if(keys.left)player.x-=390*dt;
+ if(keys.right)player.x+=390*dt;
+ player.x=Math.max(30,Math.min(W-30,player.x));
+
+ player.vy+=1500*dt;
+ player.y+=player.vy*dt;
+ if(player.y>=groundY()-58){
+  player.y=groundY()-58;player.vy=0;player.ground=true;
+ }
+
+ if(Math.random()<dt*(1.0+speed/500))spawn();
+
+ coins.forEach(c=>{
+ c.x-=speed*dt;c.spin+=dt*9;
+ if(Math.abs(c.x-player.x)<35&&Math.abs(c.y-(player.y+15))<45){
+ c.gone=true;score++;burst(c.x,c.y,"#ffdf42");
+ }
+ });
+ coins=coins.filter(c=>c.x>-40&&!c.gone);
+
+ rocks.forEach(r=>{
+ r.x-=speed*dt;
+ if(!r.hit&&player.inv<=0&&
+ Math.abs(r.x-player.x)<38&&
+ player.y+50>r.y-25){
+ r.hit=true;life--;player.inv=1.5;
+ burst(player.x,player.y,"#e9a15c");
+ if(life<=0)endGame();
+ }
+ });
+ rocks=rocks.filter(r=>r.x>-60&&!r.hit);
+
+ particles.forEach(p=>{
+ p.x+=p.vx*dt;p.y+=p.vy*dt;
+ p.vy+=500*dt;p.life-=dt;
+ });
+ particles=particles.filter(p=>p.life>0);
+ updateUI();
+}
+
+function draw(){
+ ctx.clearRect(0,0,W,H);
+ background();
+ coins.forEach(drawCoin);
+ rocks.forEach(drawRock);
+ particles.forEach(p=>{
+ ctx.globalAlpha=Math.max(0,p.life/.6);
+ ctx.fillStyle=p.color;ctx.fillRect(p.x,p.y,6,6);
+ ctx.globalAlpha=1;
+ });
+ drawPlayer();
+}
+
+let last=0;
+function loop(now){
+ let dt=Math.min((now-last)/1000,.035);
+ last=now;
+ update(dt);draw();
+ if(running)requestAnimationFrame(loop);
+}
+
+function start(){
+ reset();running=true;
+ document.getElementById("screen").style.display="none";
+ last=performance.now();requestAnimationFrame(loop);
+}
+function endGame(){
+ running=false;
+ document.getElementById("screen").innerHTML=`
+ <h1>GAME OVER</h1>
+ <p>You collected <b>${score}</b> coins!<br>
+ Distance: ${Math.floor(world/10)} metres</p>
+ <button class="start" id="again">PLAY AGAIN</button>`;
+ document.getElementById("screen").style.display="flex";
+ document.getElementById("again").onclick=start;
+}
+
+document.getElementById("start").onclick=start;
+
+function bind(id,key){
+ let b=document.getElementById(id);
+ b.addEventListener("pointerdown",e=>{
+ e.preventDefault();keys[key]=true;
+ });
+ ["pointerup","pointercancel","pointerleave"].forEach(ev=>
+ b.addEventListener(ev,e=>{keys[key]=false;}));
+}
+bind("left","left");bind("right","right");
+
+function jump(){
+ if(running&&player.ground){
+ player.vy=-650;player.ground=false;
+ }
+}
+document.getElementById("jump").addEventListener("pointerdown",e=>{
+ e.preventDefault();jump();
+});
+addEventListener("keydown",e=>{
+ if(e.key===" "||e.key==="ArrowUp")jump();
+ if(e.key==="ArrowLeft")keys.left=true;
+ if(e.key==="ArrowRight")keys.right=true;
+});
+addEventListener("keyup",e=>{
+ if(e.key==="ArrowLeft")keys.left=false;
+ if(e.key==="ArrowRight")keys.right=false;
+});
+
+reset();draw();
+</script>
+</body>
+</html>
